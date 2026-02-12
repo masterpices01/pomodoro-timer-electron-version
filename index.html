@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Pomodoro Timer</title>
+  <style>
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    text-align: center;
+    padding: 20px;
+    background-color: #f9f9f9;
+    margin: 0;
+    min-height: 100vh;
+    box-sizing: border-box;
+    /* 讓根字體可縮放 */
+    font-size: 16px;
+  }
+
+  h1 {
+    font-size: 2rem;
+    margin-bottom: 1.5rem;
+    color: #d32f2f; /* 番茄紅 */
+  }
+
+  #timer {
+    font-size: 4rem;
+    font-weight: bold;
+    margin: 1.5rem 0;
+    color: #333;
+    user-select: none;
+  }
+
+  /* 按鈕樣式優化：更大、更容易點擊 */
+  button {
+    font-size: 1.1rem;
+    padding: 0.8rem 1.8rem;     /* 內距更大 */
+    margin: 0.8rem;
+    min-width: 10em;            /* 最小寬度，避免太小 */
+    min-height: 5em;            /* 最小高度，更好點 */
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  }
+
+  button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+  }
+
+  button:active {
+    transform: translateY(0);
+  }
+
+  #start { background-color: #4caf50; color: white; }
+  #pause { background-color: #ff9800; color: white; }
+  #reset { background-color: #f44336; color: white; }
+  #selectMusic { background-color: #2196f3; color: white; }
+
+  /* 其他文字 */
+  div {
+    margin: 1rem 0;
+    font-size: 1.2rem;
+  }
+
+  #musicPath {
+    font-size: 1rem;
+    word-break: break-all;
+    color: #555;
+
+    #volumeSlider {
+  -webkit-appearance: none;
+  height: 8px;
+  border-radius: 5px;
+  background: #ddd;
+  outline: none;
+}
+
+#volumeSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #d32f2f;
+  cursor: pointer;
+}
+  }
+</style>
+</head>
+<body>
+  <h1>Pomodoro Timer</h1>
+  <div id="timer">22:25</div>
+  <button id="start">Start</button>
+  <button id="pause">Pause</button>
+  <button id="reset">Reset</button>
+  <button id="selectMusic">Select Music</button>
+  <div>Selected Music: <span id="musicPath">None</span></div>
+  <div>Selected Music: <span id="musicPath">預設音樂: assets/music.mp3</span></div>
+<div>Completed Sessions: <span id="completed">0</span></div>
+
+<!-- 新增音量控制 -->
+<div style="margin: 20px 0;">
+  音量控制：
+  <input type="range" id="volumeSlider" min="0" max="100" value="70" step="1" style="width: 200px; vertical-align: middle;">
+  <span id="volumeValue" style="margin-left: 10px; font-weight: bold;">70%</span>
+</div>
+
+<audio id="music" loop></audio>
+  <div>Completed Sessions: <span id="completed">0</span></div>
+  <audio id="music" loop></audio>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    let shouldPlayMusic = false;           // 記住「是否應該播放音樂」
+    let lastMusicCurrentTime = 0;          // （選用）如果想更精確記住暫停位置
+    let volume = 0.7; // 預設音量 70% (0.0 ~ 1.0)
+    let timerInterval;
+    let remainingTime = 22 * 60 + 25; // 25 分鐘 (秒)
+    let isRunning = false;
+    let musicPath = `file://${__dirname}/assets/Bach Cello Suite No  5 in C minor, BWV 1011(Pablo Casals 1938) - 320.mp3`;
+    const audio = document.getElementById('music');
+    audio.src = musicPath;
+    const timerDisplay = document.getElementById('timer');
+    const completedDisplay = document.getElementById('completed');
+    const musicPathDisplay = document.getElementById('musicPath');
+
+      // 一載入就顯示預設音樂路徑
+  musicPathDisplay.textContent = '預設音樂: assets/Bach Cello Suite No  5 in C minor, BWV 1011(Pablo Casals 1938) - 320.mp3';
+
+    // 載入完成的次數
+    async function loadCompletedSessions() {
+      const completed = await ipcRenderer.invoke('get-completed-sessions');
+      completedDisplay.textContent = completed;
+    }
+    // 新增：載入上次音量設定（如果沒有就用預設 70%）
+async function loadVolume() {
+  const savedVolume = await ipcRenderer.invoke('get-volume');
+  volume = savedVolume !== undefined ? savedVolume : 0.7;
+  audio.volume = volume;
+  document.getElementById('volumeSlider').value = volume * 100;
+  document.getElementById('volumeValue').textContent = Math.round(volume * 100) + '%';
+}
+
+loadCompletedSessions();
+loadVolume(); // 啟動時載入音量
+
+    // 音量滑桿控制
+document.getElementById('volumeSlider').addEventListener('input', (e) => {
+  volume = e.target.value / 100;
+  audio.volume = volume;
+  document.getElementById('volumeValue').textContent = e.target.value + '%';
+  // 儲存到本地
+  ipcRenderer.send('set-volume', volume);
+});
+
+    // 更新計時器顯示
+    function updateTimer() {
+      const minutes = Math.floor(remainingTime / 60);
+      const seconds = remainingTime % 60;
+      timerDisplay.textContent = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+    }
+
+    // 開始計時
+    document.getElementById('start').addEventListener('click', () => {
+      if (!isRunning) {
+        isRunning = true;
+        shouldPlayMusic = true;
+        timerInterval = setInterval(() => {
+          if (remainingTime > 0) {
+            remainingTime--;
+            updateTimer();
+          } else {
+            clearInterval(timerInterval);
+            isRunning = false;
+            audio.pause();
+            ipcRenderer.send('increment-completed-sessions');
+            clearInterval(timerInterval);
+            remainingTime = 22 * 60 + 25;
+            updateTimer();
+            //audio.src = ''; // 清空音樂
+            loadCompletedSessions(); // 更新顯示
+            alert('Pomodoro completed!');
+          }
+        }, 1000);
+        // if (musicPath &&　audio.src ) {
+        //   // audio.src = musicPath;
+        //   audio.play();
+        // }
+        if (musicPath ) {
+          // audio.src = musicPath;
+          shouldPlayMusic = true;
+          audio.currentTime = lastMusicCurrentTime;
+          audio.play().catch(err => {
+        console.log("自動播放被瀏覽器阻擋", err);
+      });
+        }
+      }
+    });
+
+    // 暫停計時
+    document.getElementById('pause').addEventListener('click', () => {
+      if (isRunning) {
+        clearInterval(timerInterval);
+        isRunning = false;
+        audio.pause();
+            if (shouldPlayMusic) {
+      audio.pause();
+      lastMusicCurrentTime = audio.currentTime;  // 選用：記住暫停位置
+    }
+      }
+    });
+
+    // 重置計時
+    document.getElementById('reset').addEventListener('click', () => {
+      clearInterval(timerInterval);
+      isRunning = false;
+      shouldPlayMusic = false;
+      remainingTime = 22 * 60 + 25;
+      updateTimer();
+      audio.pause();
+      audio.src = ''; // 清空音樂
+      audio.src = musicPath;
+    });
+
+    // 選擇音樂
+    document.getElementById('selectMusic').addEventListener('click', async () => {
+      musicPath = await ipcRenderer.invoke('select-music');
+      if (musicPath) {
+        musicPathDisplay.textContent = musicPath;
+      }
+    });
+
+    updateTimer(); // 初始化顯示
+  </script>
+</body>
+</html>
